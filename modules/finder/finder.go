@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 
 	"Crawler/env"
@@ -14,8 +15,9 @@ import (
 
 type DataFinder struct {
 	html     string
-	Urls     map[string]int
+	Urls     chan string
 	UniqUrls map[string]int
+	mutex    sync.Mutex
 }
 
 func (df *DataFinder) download(url string) {
@@ -31,27 +33,33 @@ func (df *DataFinder) download(url string) {
 	if err != nil {
 		errors.HandlerError(err)
 	}
+	df.mutex.Lock()
 	df.html = string(html)
+	df.mutex.Unlock()
 	time.Sleep(env.Delay * time.Millisecond)
 }
 
 func (df *DataFinder) finderUrls() {
 	findHref := regexp.MustCompile("<a.*?href=\"(https://ff.ua/.*?)\"")
+	df.mutex.Lock()
 	allHref := findHref.FindAllStringSubmatch(df.html, -1)
+	df.mutex.Unlock()
 	for _, i := range allHref {
 		n := checkNesting(i[1])
 		if env.NestingEnable == true {
 			_, isOK := df.UniqUrls[i[1]]
 			if n <= env.Nesting && isOK == false {
-				df.Urls[i[1]] = n
+				df.Urls <- i[1]
+				df.mutex.Lock()
 				df.UniqUrls[i[1]] = n
-				fmt.Println(df.Urls)
+				fmt.Println(df.UniqUrls, len(df.UniqUrls))
+				df.mutex.Unlock()
 			} else {
 				continue
 			}
 		} else {
 			if _, isOK := df.UniqUrls[i[1]]; isOK == false {
-				df.Urls[i[1]] = n
+				df.Urls <- i[1]
 				df.UniqUrls[i[1]] = n
 			}
 		}
@@ -64,18 +72,10 @@ func checkNesting(url string) int {
 }
 
 func (df *DataFinder) Finder(ch chan rabbit.Message) {
-	for {
-		if len(df.Urls) != 0 {
-			for u, _ := range df.Urls {
-				df.download(u)
-				df.finderUrls()
-				delete(df.Urls, u)
-				ms := rabbit.Message{Rk: "*.urls.#", Mess: u}
-				ch <- ms
-			}
-		} else {
-			fmt.Println("Messages send to rabbit: ", len(df.UniqUrls))
-			break
-		}
+	for u := range df.Urls {
+		df.download(u)
+		df.finderUrls()
+		ms := rabbit.Message{Rk: "*.urls.#", Mess: u}
+		ch <- ms
 	}
 }

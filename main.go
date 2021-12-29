@@ -1,7 +1,7 @@
 package main
 
 import (
-	"time"
+	"fmt"
 
 	"Crawler/env"
 	"Crawler/modules/finder"
@@ -14,18 +14,14 @@ func main() {
 	RConn.InitRabbit()
 	go RConn.Publisher(massagesChan)
 
-	urls := make(map[string]int)
-	urls[env.Url] = 1
+	urls := make(chan string, 10)
 	uniqUrls := make(map[string]int)
 	f := finder.DataFinder{Urls: urls, UniqUrls: uniqUrls}
+	f.Urls <- env.Url
 	for i := 0; i < env.Treads; i++ {
 		go f.Finder(massagesChan)
 	}
 
-	for {
-		time.Sleep(2 * env.Delay * time.Millisecond)
-		if len(f.Urls) == 0 {
-			break
-		}
-	}
+	var ex string
+	fmt.Scan(&ex)
 }
